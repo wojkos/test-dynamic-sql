@@ -8,31 +8,38 @@ A powerful natural language interface for querying and exploring databases using
 
 ## Overview
 
-This application allows users to interact with a database using natural language. It leverages Google's Gemini models for both standard text-to-SQL generation and advanced tool-calling through a custom MCP server.
+This application allows users to interact with databases using natural language. It dynamically detects database schemas and generates appropriate SQL queries without any hardcoded table or column references. The system supports both SQLite (with sample data) and PostgreSQL databases, leveraging Google's Gemini or OpenAI models for text-to-SQL generation and advanced tool-calling through a custom MCP server.
 
 ## Features
 
-- **Natural Language Querying**: Ask questions like "Who works in Engineering?" or "Show me the top 3 salaries" and get real-time SQL results.
+- **Dynamic Schema Detection**: Automatically detects database structure at startup and generates LLM prompts based on actual tables, columns, and relationships.
+- **Multi-Database Support**: Works with SQLite (auto-initialized with sample data) or PostgreSQL (connects to existing database).
+- **Natural Language Querying**: Ask questions about any data in your database and get real-time SQL results.
 - **MCP Integration**: Uses FastMCP to provide the LLM with direct access to database tools (schema viewing, raw data access, intelligent querying).
 - **Interactive Chat**: A persistent chat interface that understands context and follow-up questions.
 - **Schema Explorer**: Dynamically view the database structure and table definitions.
 - **Raw Data Viewer**: Inspect the contents of tables directly from the UI.
-- **Self-Healing Database**: The SQLite database (`backend/chat_data.db`) is automatically initialized and seeded on application startup.
+- **Schema Refresh Endpoint**: Runtime schema updates without restarting the application (`/internal/refresh-schema`).
+- **Dual LLM Support**: Works with Google Gemini (priority) or OpenAI GPT-4o-mini.
 
 ## Tech Stack
 
 - **Frontend**: Vanilla JavaScript, HTML5, CSS3
 - **Backend**: FastAPI (Python)
-- **AI/LLM**: Google Gemini 2.0 Flash / 1.5 Flash
+- **AI/LLM**: Google Gemini 2.0 Flash or OpenAI GPT-4o-mini
 - **MCP**: FastMCP for Python
-- **Database**: SQLite
+- **Database**: SQLite or PostgreSQL
+- **ORM**: SQLAlchemy (for database abstraction and schema introspection)
 
 ## Getting Started
 
 ### Prerequisites
 
 - Python 3.10+
-- A Gemini API Key (get one at [Google AI Studio](https://aistudio.google.com/))
+- An API key for either:
+  - **Gemini** (get one at [Google AI Studio](https://aistudio.google.com/)) - Recommended
+  - **OpenAI** (get one at [OpenAI Platform](https://platform.openai.com/))
+- Optional: PostgreSQL database (if not using SQLite)
 
 ### Setup
 
@@ -48,10 +55,34 @@ This application allows users to interact with a database using natural language
    ```
 
 3. **Configure Environment Variables**:
-   Create a `.env` file in the root directory with your Gemini API key:
+   Create a `.env` file in the root directory:
+   
+   **For SQLite (default - auto-initializes with sample employee/department data):**
    ```env
-   GEMINI_API_KEY=your_api_key_here
+   # LLM API Key (choose one, Gemini has priority)
+   GEMINI_API_KEY=your_gemini_key_here
+   # or
+   OPENAI_API_KEY=your_openai_key_here
+   
+   # Database Configuration
+   DATABASE_TYPE=sqlite
    ```
+   
+   **For PostgreSQL (connects to your existing database):**
+   ```env
+   # LLM API Key
+   OPENAI_API_KEY=your_openai_key_here
+   
+   # Database Configuration
+   DATABASE_TYPE=postgresql
+   POSTGRES_HOST=localhost  # or host.docker.internal if PG is in Docker
+   POSTGRES_PORT=5432
+   POSTGRES_DB=your_database_name
+   POSTGRES_USER=your_username
+   POSTGRES_PASSWORD=your_password
+   ```
+   
+   The application will automatically detect your database schema and generate appropriate system prompts for the LLM.
 
 ### Running the Application
 
@@ -77,12 +108,15 @@ Open your browser to [http://127.0.0.1:8000](http://127.0.0.1:8000) to start usi
 ## Project Structure
 
 - `backend/`: Core logic
-  - `main.py`: FastAPI application and LLM orchestration
-  - `mcp_server.py`: FastMCP server implementation
-  - `database.py`: SQLite database management and seeding
-  - `llm_service.py`: Direct SQL generation service
+  - `main.py`: FastAPI application, MCP orchestration, and schema refresh endpoint
+  - `mcp_server.py`: FastMCP server implementation (generic, database-agnostic)
+  - `database.py`: SQLAlchemy-based database abstraction with dynamic schema detection
+  - `llm_service.py`: Dynamic SQL generation service with runtime schema initialization
 - `frontend/`: UI files
   - `index.html`, `style.css`, `app.js`
-- `start_server.ps1`: Automation script for server startup
+- `start_server.ps1`: Automation script for server startup (Windows)
+- `start.sh`: Automation script for server startup (Linux/Docker)
 - `stop_server.ps1`: Automation script for server shutdown
 - `requirements.txt`: Python dependencies
+- `.env`: Configuration for API keys and database connection
+- `docker-compose.yml`: Docker containerization

@@ -5,12 +5,12 @@ This document outlines the Proof of Concept (POC) architecture for the Chat-to-D
 ---
 
 ## 🎯 Core Objective
-The primary goal of this POC is to demonstrate that an LLM can interact with a structured database through an MCP server using **zero hardcoded SQL queries**. All SQL for business logic is generated dynamically based on natural language prompts and the provided database schema.
+The primary goal of this POC is to demonstrate that an LLM can interact with **any structured database** through an MCP server using **zero hardcoded SQL queries or schema definitions**. The system automatically detects database structure at startup and dynamically generates SQL based on natural language prompts. Supports both SQLite (with auto-initialized sample data) and PostgreSQL (with runtime schema introspection).
 
 ---
 
 ## 🌐 System Context
-Shows the system's relationship with external users and API providers.
+Shows the system's relationship with external users, API providers, and databases.
 
 <div align="center">
   <img src="docs/images/context_diagram.png" width="500" alt="System Context Diagram" style="border-radius: 8px; border: 1px solid #ddd;">
@@ -22,16 +22,17 @@ Shows the system's relationship with external users and API providers.
 ```mermaid
 graph LR
     User([Business User]) -- "Natural Language" --> App[Chat-to-Data App]
-    App -- "Prompts & Context" --> Gemini((Gemini 2.0 API))
-    Gemini -- "SQL & Chat" --> App
-    App -- "Queries" --> SQLite[(SQLite DB)]
+    App -- "Prompts & Context" --> LLM((Gemini/OpenAI API))
+    LLM -- "SQL & Chat" --> App
+    App -- "Queries" --> DB[(SQLite or PostgreSQL)]
+    DB -- "Schema Detection" --> App
 ```
 </details>
 
 ---
 
 ## 🏗️ Technical Architecture
-Detailed view of the internal components and the **MCP boundary**.
+Detailed view of the internal components with **dynamic schema detection** and the **MCP boundary**.
 
 <div align="center">
   <img src="docs/images/system_diagram.png" width="700" alt="System Architecture Diagram" style="border-radius: 8px; border: 1px solid #ddd;">
@@ -46,14 +47,20 @@ graph TD
     Frontend --> BackendClient[FastAPI Backend - MCP Client]
     
     subgraph "Orchestration Layer"
-        BackendClient --> GeminiOrch[Gemini 2.0 - Orchestrator]
+        BackendClient --> GeminiOrch[Gemini/OpenAI - Orchestrator]
         GeminiOrch -- "Decides to call tool" --> MCPServer[FastMCP Server]
     end
     
     subgraph "MCP Server - Data Access Layer"
         MCPServer -- "rephrased_question" --> SQLGen[LLM SQL Generator]
-        SQLGen -- "Dynamic SQL" --> DBExec[SQLite Executor]
-        DBExec --> Database[(SQLite Database)]
+        SQLGen -- "Dynamic SQL" --> DBExec[SQLAlchemy Executor]
+        DBExec --> Database[(SQLite/PostgreSQL)]
+    end
+    
+    subgraph "Schema Detection"
+        Database -- "Introspect" --> SchemaDetector[SQLAlchemy Inspector]
+        SchemaDetector -- "Tables, Columns, FKs" --> LLMInit[LLM Initialization]
+        LLMInit -- "Dynamic System Prompt" --> SQLGen
     end
     
     Database --> DBExec
@@ -67,14 +74,16 @@ graph TD
 ---
 
 ## 📊 Data Model
-The internal schema that the LLM uses to synthesize dynamic SQL queries.
+The system **automatically detects** the database schema at startup using SQLAlchemy introspection. Below is an example schema (SQLite default with employee/department sample data).
+
+**Note:** When using PostgreSQL, the system will detect YOUR actual schema and generate appropriate LLM prompts for whatever tables exist in your database.
 
 <div align="center">
   <img src="docs/images/er_diagram.png" width="450" alt="Database ER Diagram" style="border-radius: 8px; border: 1px solid #ddd;">
 </div>
 
 <details>
-<summary>View Mermaid Source</summary>
+<summary>View Mermaid Source (Example: Default SQLite Schema)</summary>
 
 ```mermaid
 erDiagram
@@ -157,9 +166,11 @@ sequenceDiagram
 | :--- | :--- | :--- |
 | **Frontend** | Interactive UI and result visualization. | HTML, CSS, Vanilla JS |
 | **MCP Client** | FastAPI backend orchestrating LLM tool calls. | Python, FastAPI, FastMCP |
-| **MCP Server** | Encapsulates database tools and SQL generation. | Python, FastMCP Server |
-| **SQL Generator** | Translates text to SQLite queries via schema context. | Gemini 2.0 Flash |
-| **Database** | Stores employee and department records. | SQLite |
+| **MCP Server** | Encapsulates database tools and SQL generation (generic). | Python, FastMCP Server |
+| **Schema Detector** | Introspects database structure and generates LLM prompts. | SQLAlchemy Inspector |
+| **SQL Generator** | Translates text to SQL queries via dynamic schema context. | Gemini 2.0 Flash or GPT-4o-mini |
+| **Database** | Stores data (auto-initialized SQLite or existing PostgreSQL). | SQLite or PostgreSQL |
+| **ORM Layer** | Database abstraction and query execution. | SQLAlchemy |
 
 ---
 
