@@ -1,0 +1,11 @@
+services:
+  app:
+    build: .
+    ports:
+      - "7000:8000"
+    volumes:
+      - ./.env:/app/.env
+      # Optional: Mount database file if you want persistence outside container
+      # - ./backend/data:/app/backend/data
+    environment:
+      - PYTHONUNBUFFERED=1

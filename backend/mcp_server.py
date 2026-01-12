@@ -135,4 +135,9 @@ def get_table_raw_data(table_name: str) -> dict:
 
 if __name__ == "__main__":
     # Run with HTTP transport for easy integration
-    mcp.run(transport="sse", host="127.0.0.1", port=8001)
+    # Allow host binding to be configured via env var (default to 0.0.0.0 for Docker)
+    host = os.getenv("MCP_HOST", "0.0.0.0")
+    port = int(os.getenv("MCP_PORT", "8001"))
+    
+    print(f"Starting MCP Server on {host}:{port}")
+    mcp.run(transport="sse", host=host, port=port)
