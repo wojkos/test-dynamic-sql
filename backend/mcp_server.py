@@ -19,8 +19,8 @@ from backend.llm_service import generate_sql
 mcp = FastMCP(
     name="DatabaseMCPServer",
     instructions="""
-    MCP server for querying employee and department data.
-    Use this server when users ask about employees, departments, salaries, roles, budgets, managers, or locations.
+    MCP server for querying database information.
+    Use this server when users ask questions about data in the database, want to see table schemas, or need to query specific tables.
     """
 )
 
@@ -28,19 +28,17 @@ mcp = FastMCP(
 @mcp.tool
 def query_database(question: str) -> dict:
     """
-    Query the employees and departments database using natural language.
+    Query the database using natural language.
     
-    Use this tool for ANY questions about:
-    - Employees (names, roles, salaries, locations)
-    - Departments (names, budgets, managers, locations)
-    - Relationships between employees and departments
-    - Salary information and comparisons
-    - Role and position queries
-    - Location-based queries
-    - Manager assignments
+    Use this tool for ANY questions about the database, including:
+    - Retrieving specific records or subsets of data
+    - Aggregating data (counts, sums, averages, etc.)
+    - Filtering data based on conditions
+    - Joining data from multiple related tables
+    - Sorting and comparing data
     
     Args:
-        question: Natural language question about employees or departments
+        question: Natural language question about the data in the database
         
     Returns:
         Dictionary with generated SQL, query results, and any errors
@@ -109,7 +107,7 @@ def get_table_raw_data(table_name: str) -> dict:
     - Export or review complete table data
     
     Args:
-        table_name: Name of the table (either 'employees' or 'departments')
+        table_name: Name of the table to retrieve data from
         
     Returns:
         Dictionary with all rows from the specified table

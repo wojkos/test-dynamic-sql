@@ -1,154 +1,325 @@
-import sqlite3
+"""
+Database abstraction layer supporting both SQLite (with fake data) and PostgreSQL (dynamic schema).
+
+Uses SQLAlchemy for database abstraction and provides dynamic schema detection.
+"""
+
 import os
+from sqlalchemy import create_engine, text, inspect, MetaData, Table, Column, Integer, String, ForeignKey
+from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.pool import NullPool
+from dotenv import load_dotenv
 
-DB_PATH = "backend/chat_data.db"
+load_dotenv()
 
-def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+# Configuration
+DATABASE_TYPE = os.getenv("DATABASE_TYPE", "sqlite").lower()  # sqlite or postgresql
 
-def init_db():
-    if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)
+# SQLite Configuration
+SQLITE_DB_PATH = "backend/chat_data.db"
+
+# PostgreSQL Configuration
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
+POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+POSTGRES_DB = os.getenv("POSTGRES_DB", "mydb")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "")
+
+# Global engine and session
+engine = None
+SessionLocal = None
+Base = declarative_base()
+
+# Cache for schema information
+_schema_cache = None
+
+
+def get_database_url():
+    """Get the database URL based on DATABASE_TYPE."""
+    if DATABASE_TYPE == "postgresql":
+        return f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+    else:
+        # Default to SQLite
+        return f"sqlite:///{SQLITE_DB_PATH}"
+
+
+def init_database_engine():
+    """Initialize the database engine and session factory."""
+    global engine, SessionLocal
     
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    database_url = get_database_url()
+    print(f"Initializing database: {DATABASE_TYPE} ({database_url.split('@')[-1] if '@' in database_url else database_url})")
     
-    # Create departments table first (referenced by employees)
-    cursor.execute("""
-    CREATE TABLE departments (
-      id INTEGER PRIMARY KEY,
-      name TEXT,
-      budget INTEGER,
-      manager_id INTEGER,
-      location TEXT
-    );
-    """)
+    if DATABASE_TYPE == "postgresql":
+        engine = create_engine(database_url, poolclass=NullPool, echo=False)
+    else:
+        engine = create_engine(database_url, connect_args={"check_same_thread": False}, echo=False)
     
-    # Create employees table with department_id foreign key
-    cursor.execute("""
-    CREATE TABLE employees (
-      id INTEGER PRIMARY KEY,
-      name TEXT,
-      department TEXT,
-      role TEXT,
-      salary INTEGER,
-      location TEXT,
-      department_id INTEGER,
-      FOREIGN KEY (department_id) REFERENCES departments(id)
-    );
-    """)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     
-    # Seed departments (without manager_id first, will update after employees exist)
-    cursor.execute("""
-    INSERT INTO departments (id, name, budget, location) VALUES
-    (1, 'Engineering', 500000, 'TX'),
-    (2, 'Sales', 300000, 'CA'),
-    (3, 'HR', 200000, 'NY');
-    """)
+    # Initialize SQLite with fake data if needed
+    if DATABASE_TYPE == "sqlite":
+        init_sqlite_fake_data()
+
+
+def init_sqlite_fake_data():
+    """Initialize SQLite database with fake employee/department data."""
+    global engine
     
-    # Seed employees with department_id references
-    cursor.execute("""
-    INSERT INTO employees VALUES
-    (1, 'Alice', 'Engineering', 'Software Engineer', 120000, 'NY', 1),
-    (2, 'Bob', 'Sales', 'Account Manager', 90000, 'CA', 2),
-    (3, 'Charlie', 'Engineering', 'DevOps Engineer', 130000, 'TX', 1),
-    (4, 'Diana', 'HR', 'HR Manager', 85000, 'NY', 3),
-    (5, 'Evan', 'Engineering', 'Data Scientist', 140000, 'CA', 1);
-    """)
+    # Check if database file exists and has tables
+    if os.path.exists(SQLITE_DB_PATH):
+        inspector = inspect(engine)
+        if inspector.get_table_names():
+            print("SQLite database already exists with data. Skipping initialization.")
+            return
     
-    # Update departments with manager_id now that employees exist
-    cursor.execute("""
-    UPDATE departments SET manager_id = 3 WHERE id = 1;
-    """)
-    cursor.execute("""
-    UPDATE departments SET manager_id = 2 WHERE id = 2;
-    """)
-    cursor.execute("""
-    UPDATE departments SET manager_id = 4 WHERE id = 3;
-    """)
+    print("Initializing SQLite with fake employee/department data...")
     
-    conn.commit()
-    conn.close()
-    print("Database initialized and seeded with employees and departments tables.")
+    metadata = MetaData()
+    
+    # Create departments table
+    departments = Table('departments', metadata,
+        Column('id', Integer, primary_key=True),
+        Column('name', String),
+        Column('budget', Integer),
+        Column('manager_id', Integer),
+        Column('location', String)
+    )
+    
+    # Create employees table
+    employees = Table('employees', metadata,
+        Column('id', Integer, primary_key=True),
+        Column('name', String),
+        Column('department', String),
+        Column('role', String),
+        Column('salary', Integer),
+        Column('location', String),
+        Column('department_id', Integer, ForeignKey('departments.id'))
+    )
+    
+    # Create tables
+    metadata.create_all(engine)
+    
+    # Seed data
+    with engine.connect() as conn:
+        # Insert departments
+        conn.execute(departments.insert(), [
+            {"id": 1, "name": "Engineering", "budget": 500000, "location": "TX", "manager_id": None},
+            {"id": 2, "name": "Sales", "budget": 300000, "location": "CA", "manager_id": None},
+            {"id": 3, "name": "HR", "budget": 200000, "location": "NY", "manager_id": None}
+        ])
+        
+        # Insert employees
+        conn.execute(employees.insert(), [
+            {"id": 1, "name": "Alice", "department": "Engineering", "role": "Software Engineer", "salary": 120000, "location": "NY", "department_id": 1},
+            {"id": 2, "name": "Bob", "department": "Sales", "role": "Account Manager", "salary": 90000, "location": "CA", "department_id": 2},
+            {"id": 3, "name": "Charlie", "department": "Engineering", "role": "DevOps Engineer", "salary": 130000, "location": "TX", "department_id": 1},
+            {"id": 4, "name": "Diana", "department": "HR", "role": "HR Manager", "salary": 85000, "location": "NY", "department_id": 3},
+            {"id": 5, "name": "Evan", "department": "Engineering", "role": "Data Scientist", "salary": 140000, "location": "CA", "department_id": 1}
+        ])
+        
+        # Update departments with managers
+        conn.execute(departments.update().where(departments.c.id == 1).values(manager_id=3))
+        conn.execute(departments.update().where(departments.c.id == 2).values(manager_id=2))
+        conn.execute(departments.update().where(departments.c.id == 3).values(manager_id=4))
+        
+        conn.commit()
+    
+    print("SQLite database initialized with fake data.")
+
+
+def detect_schema():
+    """
+    Detect database schema dynamically using SQLAlchemy.
+    Returns structured schema information including tables, columns, types, and relationships.
+    """
+    global engine, _schema_cache
+    
+    if engine is None:
+        init_database_engine()
+    
+    print("Detecting database schema...")
+    
+    inspector = inspect(engine)
+    table_names = inspector.get_table_names()
+    
+    if not table_names:
+        print("Warning: No tables found in database.")
+        return {"tables": [], "relationships": []}
+    
+    schema_info = {
+        "tables": [],
+        "relationships": []
+    }
+    
+    for table_name in table_names:
+        columns = inspector.get_columns(table_name)
+        pk_constraint = inspector.get_pk_constraint(table_name)
+        foreign_keys = inspector.get_foreign_keys(table_name)
+        
+        # Format columns
+        column_info = []
+        for col in columns:
+            column_info.append({
+                "name": col["name"],
+                "type": str(col["type"]),
+                "nullable": col["nullable"],
+                "primary_key": col["name"] in pk_constraint.get("constrained_columns", [])
+            })
+        
+        schema_info["tables"].append({
+            "table_name": table_name,
+            "columns": column_info
+        })
+        
+        # Extract foreign key relationships
+        for fk in foreign_keys:
+            for i, col in enumerate(fk["constrained_columns"]):
+                schema_info["relationships"].append({
+                    "from_table": table_name,
+                    "from_column": col,
+                    "to_table": fk["referred_table"],
+                    "to_column": fk["referred_columns"][i] if i < len(fk["referred_columns"]) else "id"
+                })
+    
+    _schema_cache = schema_info
+    print(f"Schema detected: {len(schema_info['tables'])} tables, {len(schema_info['relationships'])} relationships")
+    
+    return schema_info
+
+
+def format_schema_for_llm(schema_info):
+    """
+    Format detected schema into a string suitable for LLM system instructions.
+    Generates CREATE TABLE statements and relationship descriptions.
+    """
+    if not schema_info or not schema_info.get("tables"):
+        return "No database schema available."
+    
+    output = []
+    
+    # Add database type info
+    output.append(f"The database is {DATABASE_TYPE.upper()}.")
+    table_names = ', '.join([f"`{t['table_name']}`" for t in schema_info['tables']])
+    output.append(f"The database contains {len(schema_info['tables'])} table(s): {table_names}.")
+    output.append("")
+    output.append("SCHEMAS:")
+    output.append("")
+    
+    # Generate CREATE TABLE statements
+    for table in schema_info["tables"]:
+        output.append(f"CREATE TABLE {table['table_name']} (")
+        
+        column_lines = []
+        for col in table["columns"]:
+            line = f"  {col['name']} {col['type']}"
+            if col["primary_key"]:
+                line += " PRIMARY KEY"
+            if not col["nullable"]:
+                line += " NOT NULL"
+            column_lines.append(line)
+        
+        output.append(",\n".join(column_lines))
+        output.append(");")
+        output.append("")
+    
+    # Add relationships section
+    if schema_info.get("relationships"):
+        output.append("RELATIONSHIPS:")
+        for rel in schema_info["relationships"]:
+            output.append(f"- {rel['from_table']}.{rel['from_column']} → {rel['to_table']}.{rel['to_column']}")
+        output.append("")
+    
+    return "\n".join(output)
+
 
 def execute_read_query(query: str):
-    # Basic safety check: ensure strictly read-only by checking for forbidden keywords (naive but functional for POC)
-    forbidden_keywords = ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE", "REPLACE"]
+    """Execute a read-only SQL query safely."""
+    global engine
+    
+    if engine is None:
+        init_database_engine()
+    
+    # Basic safety check: ensure strictly read-only
+    forbidden_keywords = ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "TRUNCATE", "REPLACE", "CREATE"]
     if any(keyword in query.upper() for keyword in forbidden_keywords):
         return {"error": "Only SELECT queries are allowed."}
     
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(query)
-        rows = cursor.fetchall()
-        # Convert rows to dicts
-        result = [dict(row) for row in rows]
-        conn.close()
-        return {"data": result}
+        with engine.connect() as conn:
+            result = conn.execute(text(query))
+            rows = result.fetchall()
+            
+            # Convert to list of dicts
+            if rows:
+                columns = result.keys()
+                data = [dict(zip(columns, row)) for row in rows]
+            else:
+                data = []
+            
+            return {"data": data}
     except Exception as e:
         return {"error": str(e)}
 
+
 def get_schema():
-    """Get schema information for all tables in the database."""
+    """Get schema information for all tables (API-compatible with old interface)."""
+    global _schema_cache
+    
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        if _schema_cache is None:
+            detect_schema()
         
-        # Get all table names
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;")
-        tables = cursor.fetchall()
-        
-        schema_info = []
-        for table_row in tables:
-            table_name = table_row['name']
-            
-            # Get column information for each table
-            cursor.execute(f"PRAGMA table_info({table_name});")
-            columns = cursor.fetchall()
-            
-            column_details = []
-            for col in columns:
-                column_details.append({
-                    "name": col['name'],
-                    "type": col['type'],
-                    "nullable": not col['notnull'],
-                    "primary_key": bool(col['pk'])
+        # Convert to old format for compatibility
+        schema_list = []
+        if _schema_cache:
+            for table in _schema_cache.get("tables", []):
+                schema_list.append({
+                    "table_name": table["table_name"],
+                    "columns": table["columns"]
                 })
-            
-            schema_info.append({
-                "table_name": table_name,
-                "columns": column_details
-            })
         
-        conn.close()
-        return {"schema": schema_info}
+        return {"schema": schema_list}
     except Exception as e:
         return {"error": str(e)}
+
 
 def get_table_data(table_name: str):
     """Get all data from a specific table."""
-    # Validate table name to prevent SQL injection
+    global engine
+    
+    if engine is None:
+        init_database_engine()
+    
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # Verify table exists
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?;", (table_name,))
-        if not cursor.fetchone():
-            conn.close()
+        inspector = inspect(engine)
+        if table_name not in inspector.get_table_names():
             return {"error": f"Table '{table_name}' does not exist."}
         
-        # Fetch all data from the table
-        cursor.execute(f"SELECT * FROM {table_name};")
-        rows = cursor.fetchall()
-        result = [dict(row) for row in rows]
-        conn.close()
-        return {"data": result, "table_name": table_name}
+        with engine.connect() as conn:
+            result = conn.execute(text(f"SELECT * FROM {table_name}"))
+            rows = result.fetchall()
+            
+            if rows:
+                columns = result.keys()
+                data = [dict(zip(columns, row)) for row in rows]
+            else:
+                data = []
+            
+            return {"data": data, "table_name": table_name}
     except Exception as e:
         return {"error": str(e)}
 
-if __name__ == "__main__":
-    init_db()
+
+def refresh_schema():
+    """
+    Refresh the cached schema by re-detecting it.
+    Returns the updated schema information.
+    """
+    global _schema_cache
+    _schema_cache = None
+    return detect_schema()
+
+
+# Initialize on module import
+init_database_engine()
