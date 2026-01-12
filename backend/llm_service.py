@@ -1,18 +1,27 @@
 import os
 import google.generativeai as genai
 from dotenv import load_dotenv
+import openai
 
 load_dotenv()
 
-API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    # Just a warning, main.py might handle this or it will fail at runtime
-    print("Warning: GEMINI_API_KEY not found in environment variables.")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-genai.configure(api_key=API_KEY)
-
-# Use a model that is good at code/logic. Gemini 1.5 Flash is usually good for this speed/cost.
-MODEL_NAME = 'gemini-2.0-flash'
+if GEMINI_API_KEY:
+    provider = "gemini"
+    API_KEY = GEMINI_API_KEY
+    MODEL_NAME = 'gemini-2.0-flash'
+    genai.configure(api_key=API_KEY)
+    model = genai.GenerativeModel(model_name=MODEL_NAME, system_instruction=SYSTEM_INSTRUCTION)
+elif OPENAI_API_KEY:
+    provider = "openai"
+    API_KEY = OPENAI_API_KEY
+    MODEL_NAME = 'gpt-4o-mini'
+    client = openai.OpenAI(api_key=API_KEY)
+else:
+    provider = None
+    print("Warning: Neither GEMINI_API_KEY nor OPENAI_API_KEY found in environment variables.")
 
 SYSTEM_INSTRUCTION = """You are an assistant that generates read-only SQL queries for a SQLite database.
 The database contains two tables: `employees` and `departments`.
@@ -60,31 +69,52 @@ EXAMPLES:
 - "Who manages each department?" → SELECT d.name AS department, e.name AS manager FROM departments d INNER JOIN employees e ON d.manager_id = e.id
 """
 
-model = genai.GenerativeModel(model_name=MODEL_NAME, system_instruction=SYSTEM_INSTRUCTION)
-
 def generate_sql(question: str) -> str:
     """
-    Generates a SQL query from a natural language question using Gemini.
+    Generates a SQL query from a natural language question using Gemini or OpenAI.
     """
-    # Mock Mode removed as per user request.
-    if not API_KEY:
-         print("Warning: API Key is missing, but Mock Mode is disabled. Calls will fail.")
-
-    prompt = f"User question: {question}\n\nGenerate a SQLite SELECT query only."
-    
-    try:
-        response = model.generate_content(prompt)
-        sql = response.text.strip()
+    if provider == "gemini":
+        prompt = f"User question: {question}\n\nGenerate a SQLite SELECT query only."
         
-        # Cleanup: remove markdown code blocks if the model puts them in
-        if sql.startswith("```sql"):
-            sql = sql[6:]
-        if sql.startswith("```"):
-            sql = sql[3:]
-        if sql.endswith("```"):
-            sql = sql[:-3]
+        try:
+            response = model.generate_content(prompt)
+            sql = response.text.strip()
             
-        return sql.strip()
-    except Exception as e:
-        print(f"Error generating SQL: {e}")
-        return "SELECT * FROM employees LIMIT 0;" # Safe fallback or error indicator
+            # Cleanup: remove markdown code blocks if the model puts them in
+            if sql.startswith("```sql"):
+                sql = sql[6:]
+            if sql.startswith("```"):
+                sql = sql[3:]
+            if sql.endswith("```"):
+                sql = sql[:-3]
+                
+            return sql.strip()
+        except Exception as e:
+            print(f"Error generating SQL with Gemini: {e}")
+            return "SELECT * FROM employees LIMIT 0;" # Safe fallback or error indicator
+    elif provider == "openai":
+        try:
+            response = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": SYSTEM_INSTRUCTION},
+                    {"role": "user", "content": f"User question: {question}\n\nGenerate a SQLite SELECT query only."}
+                ]
+            )
+            sql = response.choices[0].message.content.strip()
+            
+            # Cleanup: remove markdown code blocks if the model puts them in
+            if sql.startswith("```sql"):
+                sql = sql[6:]
+            if sql.startswith("```"):
+                sql = sql[3:]
+            if sql.endswith("```"):
+                sql = sql[:-3]
+                
+            return sql.strip()
+        except Exception as e:
+            print(f"Error generating SQL with OpenAI: {e}")
+            return "SELECT * FROM employees LIMIT 0;" # Safe fallback or error indicator
+    else:
+        print("No API key available for either provider.")
+        return "SELECT * FROM employees LIMIT 0;"
